@@ -1,0 +1,210 @@
+# =========================================
+# TIME SERIES FORECASTING: ENERGY CONSUMPTION
+# Models: ARIMA, LSTM, XGBoost
+# =========================================
+
+# Libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.preprocessing import MinMaxScaler
+import warnings
+warnings.filterwarnings('ignore')
+
+# =========================================
+# 1. LOAD AND PREPARE DATA
+# =========================================
+
+# Load dataset (replace with your file)
+df = pd.read_csv("energy.csv", parse_dates=["Date"], index_col="Date")
+
+# Sort by date just in case
+df = df.sort_index()
+
+# Check structure
+print(df.head())
+print(df.info())
+
+# Check missing values
+print("Missing values:\n", df.isnull().sum())
+
+# Fill missing values if any
+df.fillna(method="ffill", inplace=True)
+
+# =========================================
+# 2. EXPLORATORY DATA ANALYSIS (EDA)
+# =========================================
+
+plt.figure(figsize=(12,5))
+plt.plot(df['Energy'], color='blue', label='Energy Consumption')
+plt.title("Energy Consumption Over Time")
+plt.xlabel("Date")
+plt.ylabel("Energy Usage (kWh)")
+plt.legend()
+plt.show()
+
+# Check for seasonality and trends
+df['Energy'].plot(figsize=(12,4), title="Energy Usage Trend", color="purple")
+plt.show()
+
+# =========================================
+# 3. SPLIT DATA INTO TRAIN & TEST
+# =========================================
+
+train_size = int(len(df) * 0.8)
+train, test = df.iloc[:train_size], df.iloc[train_size:]
+print("Training samples:", len(train))
+print("Testing samples:", len(test))
+
+# =========================================
+# 4. MODEL 1: ARIMA
+# =========================================
+from statsmodels.tsa.arima.model import ARIMA
+
+arima_model = ARIMA(train['Energy'], order=(5,1,2))
+arima_fit = arima_model.fit()
+
+# Forecast
+arima_forecast = arima_fit.forecast(steps=len(test))
+arima_forecast.index = test.index
+
+# Evaluation
+arima_rmse = np.sqrt(mean_squared_error(test['Energy'], arima_forecast))
+arima_mae = mean_absolute_error(test['Energy'], arima_forecast)
+arima_r2 = r2_score(test['Energy'], arima_forecast)
+
+print("=== ARIMA Performance ===")
+print(f"RMSE: {arima_rmse:.2f}")
+print(f"MAE : {arima_mae:.2f}")
+print(f"R²  : {arima_r2:.4f}")
+
+plt.figure(figsize=(12,5))
+plt.plot(train.index, train['Energy'], label="Training Data", color='blue')
+plt.plot(test.index, test['Energy'], label="Actual Data", color='black')
+plt.plot(arima_forecast.index, arima_forecast, label="ARIMA Forecast", color='red')
+plt.title("ARIMA Forecasting")
+plt.xlabel("Date")
+plt.ylabel("Energy Usage")
+plt.legend()
+plt.show()
+
+# =========================================
+# 5. MODEL 2: LSTM (Deep Learning)
+# =========================================
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+
+# Normalize data
+scaler = MinMaxScaler()
+scaled_data = scaler.fit_transform(df[['Energy']])
+
+# Prepare sequences
+def create_sequences(data, window_size):
+    X, y = [], []
+    for i in range(window_size, len(data)):
+        X.append(data[i-window_size:i])
+        y.append(data[i])
+    return np.array(X), np.array(y)
+
+window_size = 30
+X, y = create_sequences(scaled_data, window_size)
+
+# Split into train/test
+X_train, X_test = X[:train_size-window_size], X[train_size-window_size:]
+y_train, y_test = y[:train_size-window_size], y[train_size-window_size:]
+
+# Reshape for LSTM
+X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
+X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
+
+# Build LSTM model
+lstm_model = Sequential()
+lstm_model.add(LSTM(64, activation='relu', return_sequences=True, input_shape=(window_size,1)))
+lstm_model.add(LSTM(32, activation='relu'))
+lstm_model.add(Dense(1))
+lstm_model.compile(optimizer='adam', loss='mse')
+
+# Train
+lstm_model.fit(X_train, y_train, epochs=20, batch_size=32, verbose=1)
+
+# Forecast
+lstm_pred = lstm_model.predict(X_test)
+lstm_pred = scaler.inverse_transform(lstm_pred)
+y_test_actual = scaler.inverse_transform(y_test)
+
+# Evaluation
+lstm_rmse = np.sqrt(mean_squared_error(y_test_actual, lstm_pred))
+lstm_mae = mean_absolute_error(y_test_actual, lstm_pred)
+lstm_r2 = r2_score(y_test_actual, lstm_pred)
+
+print("=== LSTM Performance ===")
+print(f"RMSE: {lstm_rmse:.2f}")
+print(f"MAE : {lstm_mae:.2f}")
+print(f"R²  : {lstm_r2:.4f}")
+
+plt.figure(figsize=(12,5))
+plt.plot(test.index[window_size:], y_test_actual, label="Actual Data", color='black')
+plt.plot(test.index[window_size:], lstm_pred, label="LSTM Forecast", color='green')
+plt.title("LSTM Forecasting")
+plt.xlabel("Date")
+plt.ylabel("Energy Usage")
+plt.legend()
+plt.show()
+
+# =========================================
+# 6. MODEL 3: XGBOOST
+# =========================================
+import xgboost as xgb
+
+# Feature engineering for XGBoost
+df['Hour'] = df.index.hour
+df['Day'] = df.index.day
+df['Month'] = df.index.month
+
+X = df[['Hour', 'Day', 'Month']]
+y = df['Energy']
+
+X_train, X_test = X[:train_size], X[train_size:]
+y_train, y_test = y[:train_size], y[train_size:]
+
+xgb_model = xgb.XGBRegressor(n_estimators=200, learning_rate=0.1)
+xgb_model.fit(X_train, y_train)
+xgb_pred = xgb_model.predict(X_test)
+
+xgb_rmse = np.sqrt(mean_squared_error(y_test, xgb_pred))
+xgb_mae = mean_absolute_error(y_test, xgb_pred)
+xgb_r2 = r2_score(y_test, xgb_pred)
+
+print("=== XGBoost Performance ===")
+print(f"RMSE: {xgb_rmse:.2f}")
+print(f"MAE : {xgb_mae:.2f}")
+print(f"R²  : {xgb_r2:.4f}")
+
+plt.figure(figsize=(12,5))
+plt.plot(test.index, y_test, label="Actual Data", color='black')
+plt.plot(test.index, xgb_pred, label="XGBoost Forecast", color='orange')
+plt.title("XGBoost Forecasting")
+plt.xlabel("Date")
+plt.ylabel("Energy Usage")
+plt.legend()
+plt.show()
+
+# =========================================
+# 7. COMPARE ALL MODELS
+# =========================================
+results = pd.DataFrame({
+    "Model": ["ARIMA", "LSTM", "XGBoost"],
+    "RMSE": [arima_rmse, lstm_rmse, xgb_rmse],
+    "MAE": [arima_mae, lstm_mae, xgb_mae],
+    "R²": [arima_r2, lstm_r2, xgb_r2]
+})
+
+print("\n=== MODEL COMPARISON ===")
+print(results)
+
+sns.barplot(x="Model", y="RMSE", data=results, palette="viridis")
+plt.title("Model Comparison: RMSE")
+plt.show()
